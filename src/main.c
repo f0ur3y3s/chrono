@@ -3,7 +3,10 @@
 static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARAM l_param);
 static BOOL             set_rounded_corners (HWND h_wnd, int radius);
 static void             debug_log (const WCHAR * p_format, ...);
-static BOOL             paint_chrono ();
+static void             snap_to_corner (HWND h_wnd);
+
+static BOOL  gb_is_dragging = FALSE;
+static POINT g_drag_offset  = { 0, 0 };
 
 int WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cmdline, int show_cmd)
 {
@@ -53,7 +56,7 @@ int WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
         goto EXIT;
     }
 
-    if (!set_rounded_corners(h_wnd, 20))
+    if (!set_rounded_corners(h_wnd, RADIUS))
     {
         debug_log(L"Failed to set rounded corners, %d\n", GetLastError());
         status = 4;
@@ -231,10 +234,6 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
 
             return 0;
 
-        case WM_LBUTTONDOWN:
-            SendMessageW(h_wnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-            return 0;
-
         case WM_RBUTTONDOWN:
             PostMessageW(h_wnd, WM_CLOSE, 0, 0);
             return 0;
@@ -243,6 +242,53 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
             if (VK_ESCAPE == w_param)
             {
                 PostMessageW(h_wnd, WM_CLOSE, 0, 0);
+            }
+
+            return 0;
+
+        case WM_LBUTTONDOWN:
+            if (B_SHOULD_SNAP)
+            {
+                gb_is_dragging   = TRUE;
+                POINT cursor_pos = { 0 };
+                GetCursorPos(&cursor_pos);
+
+                RECT window_rect = { 0 };
+                GetWindowRect(h_wnd, &window_rect);
+
+                g_drag_offset.x = cursor_pos.x - window_rect.left;
+                g_drag_offset.y = cursor_pos.y - window_rect.top;
+
+                SetCapture(h_wnd);
+                SendMessageW(h_wnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            }
+            else
+            {
+                SendMessageW(h_wnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            }
+
+            return 0;
+
+        case WM_LBUTTONUP:
+            if (gb_is_dragging)
+            {
+                gb_is_dragging = FALSE;
+                ReleaseCapture();
+                snap_to_corner(h_wnd);
+            }
+
+            return 0;
+
+        case WM_MOUSEMOVE:
+            if (gb_is_dragging && (w_param & MK_LBUTTON))
+            {
+                POINT cursor_pos = { 0 };
+                GetCursorPos(&cursor_pos);
+
+                int new_x = cursor_pos.x - g_drag_offset.x;
+                int new_y = cursor_pos.y - g_drag_offset.y;
+
+                SetWindowPos(h_wnd, NULL, new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
 
             return 0;
@@ -294,4 +340,109 @@ static void debug_log (const WCHAR * p_format, ...)
     vswprintf(buffer, sizeof(buffer) / sizeof(WCHAR), p_format, args);
     va_end(args);
     OutputDebugStringW(buffer);
+}
+
+static void snap_to_corner (HWND h_wnd)
+{
+    RECT window_rect = { 0 };
+
+    if (!GetWindowRect(h_wnd, &window_rect))
+    {
+        debug_log(L"Failed to get window rectangle for snapping\n");
+        goto EXIT;
+    }
+
+    HMONITOR h_monitor = MonitorFromWindow(h_wnd, MONITOR_DEFAULTTONEAREST);
+
+    if (NULL == h_monitor)
+    {
+        debug_log(L"Failed to get monitor handle for snapping\n");
+        goto EXIT;
+    }
+
+    MONITORINFO monitor_info = { 0 };
+    monitor_info.cbSize      = sizeof(MONITORINFO);
+
+    if (!GetMonitorInfoW(h_monitor, &monitor_info))
+    {
+        debug_log(L"Failed to get monitor info for snapping\n");
+        goto EXIT;
+    }
+
+    RECT monitor_rect   = monitor_info.rcMonitor;
+    int  window_width   = window_rect.right - window_rect.left;
+    int  window_height  = window_rect.bottom - window_rect.top;
+    int  monitor_left   = monitor_rect.left;
+    int  monitor_top    = monitor_rect.top;
+    int  monitor_right  = monitor_rect.right;
+    int  monitor_bottom = monitor_rect.bottom;
+    int  new_x          = window_rect.left;
+    int  new_y          = window_rect.top;
+    BOOL b_snapped      = FALSE;
+
+    // clang-format off
+    snap_target_t snap_targets[] = {
+        { (window_rect.left <= monitor_left + SNAP_DISTANCE && window_rect.top <= monitor_top + SNAP_DISTANCE),
+          monitor_left,
+          monitor_top,
+          "top-left" },
+
+        { (window_rect.right >= monitor_right - SNAP_DISTANCE && window_rect.top <= monitor_top + SNAP_DISTANCE),
+          monitor_right - window_width,
+          monitor_top,
+          "top-right" },
+
+        { (window_rect.left <= monitor_left + SNAP_DISTANCE && window_rect.bottom >= monitor_bottom - SNAP_DISTANCE),
+          monitor_left,
+          monitor_bottom - window_height,
+          "bottom-left" },
+
+        { (window_rect.right >= monitor_right - SNAP_DISTANCE && window_rect.bottom >= monitor_bottom - SNAP_DISTANCE),
+          monitor_right - window_width,
+          monitor_bottom - window_height,
+          "bottom-right" },
+
+        { (window_rect.top <= monitor_top + SNAP_DISTANCE),
+          new_x,
+          monitor_top,
+          "top-edge" },
+
+        { (window_rect.bottom >= monitor_bottom - SNAP_DISTANCE),
+          new_x,
+          monitor_bottom - window_height,
+          "bottom-edge" },
+
+        { (window_rect.left <= monitor_left + SNAP_DISTANCE),
+          monitor_left,
+          new_y,
+          "left-edge" },
+
+        { (window_rect.right >= monitor_right - SNAP_DISTANCE),
+          monitor_right - window_width,
+          new_y,
+          "right-edge" }
+    };
+    // clang-format on
+
+    // check each snap target in priority order
+    for (int idx = 0; idx < (sizeof(snap_targets) / sizeof(snap_targets[0])); idx++)
+    {
+        if (snap_targets[idx].b_cond)
+        {
+            new_x     = snap_targets[idx].x;
+            new_y     = snap_targets[idx].y;
+            b_snapped = TRUE;
+            debug_log(L"Snapped to %S\n", snap_targets[idx].p_name);
+            break;
+        }
+    }
+
+    if (b_snapped)
+    {
+        SetWindowPos(h_wnd, NULL, new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        debug_log(L"Window b_snapped to position: %d, %d on monitor\n", new_x, new_y);
+    }
+
+EXIT:
+    return;
 }
