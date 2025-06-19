@@ -30,7 +30,7 @@ INT WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
         goto EXIT;
     }
 
-    HWND h_wnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST,
+    HWND h_wnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
                                  CLASS_NAME,
                                  WINDOW_NAME,
                                  WS_POPUP,
