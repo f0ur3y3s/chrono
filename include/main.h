@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <dwmapi.h>
 #include <WinUser.h>
+#include "debug.h"
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "user32.lib")

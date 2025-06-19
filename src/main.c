@@ -1,17 +1,22 @@
+
 #include "main.h"
 
 static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARAM l_param);
-static VOID             debug_log (CONST WCHAR * p_format, ...);
 static VOID             snap_to_corner (HWND h_wnd);
 static BOOL             enable_acrylic (HWND h_wnd);
 static BOOL             enable_dwm_rounded_corners (HWND h_wnd);
 static VOID             apply_rounded_corners (HWND h_wnd, INT radius);
+
+// No-CRT helper functions
+static VOID get_current_time_string (WCHAR * buffer, SIZE_T buffer_size);
+static VOID strcpy_nocrt (CHAR * dest, const CHAR * src, SIZE_T dest_size);
 
 static BOOL  gb_is_dragging = FALSE;
 static POINT g_drag_offset  = { 0, 0 };
 
 INT WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cmdline, INT show_cmd)
 {
+    DLOG("Starting chronofloat...\n");
     UNREFERENCED_PARAMETER(h_prev_instance);
     UNREFERENCED_PARAMETER(lp_cmdline);
 
@@ -26,7 +31,7 @@ INT WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
 
     if (0 == RegisterClassExW(&wnd))
     {
-        debug_log(L"Failed to register window class: %d\n", GetLastError());
+        DLOG("Failed to register window class: %d\n", GetLastError());
         goto EXIT;
     }
 
@@ -45,7 +50,7 @@ INT WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
 
     if (NULL == h_wnd)
     {
-        debug_log(L"Failed to create window, %d\n", GetLastError());
+        DLOG("Failed to create window, %d\n", GetLastError());
         goto EXIT;
     }
 
@@ -64,29 +69,21 @@ INT WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
 
     if (!SetLayeredWindowAttributes(h_wnd, 0, TRANSPARENCY, LWA_ALPHA))
     {
-        debug_log(L"Failed to set layered window attributes, %d\n", GetLastError());
+        DLOG("Failed to set layered window attributes, %d\n", GetLastError());
         goto EXIT;
     }
 
     if (0 == SetTimer(h_wnd, TIMER_ID, UPDATE_INTERVAL, NULL))
     {
-        debug_log(L"Failed to set timer, %d\n", GetLastError());
+        DLOG("Failed to set timer, %d\n", GetLastError());
         goto EXIT;
     }
 
     ShowWindow(h_wnd, show_cmd);
 
-    // TODO: something funky here with winapi
-    // if (!ShowWindow(h_wnd, show_cmd))
-    // {
-    //     debug_log(L"Failed to show window, %d\n", GetLastError());
-    //     status = 6;
-    //     goto EXIT;
-    // }
-
     if (!UpdateWindow(h_wnd))
     {
-        debug_log(L"Failed to update window, %d\n", GetLastError());
+        DLOG("Failed to update window, %d\n", GetLastError());
         goto EXIT;
     }
 
@@ -108,7 +105,7 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
 {
     if (NULL == h_wnd)
     {
-        debug_log(L"Invalid window handle, %d\n", GetLastError());
+        DLOG("Invalid window handle, %d\n", GetLastError());
         PostQuitMessage(1);
     }
 
@@ -117,7 +114,7 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
         case WM_DESTROY:
             if (!KillTimer(h_wnd, TIMER_ID))
             {
-                debug_log(L"Failed to kill timer, %d\n", GetLastError());
+                DLOG("Failed to kill timer, %d\n", GetLastError());
             }
 
             PostQuitMessage(0);
@@ -129,7 +126,7 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
 
             if (NULL == h_display_ctx)
             {
-                debug_log(L"Failed to get display context, %d\n", GetLastError());
+                DLOG("Failed to get display context, %d\n", GetLastError());
                 PostQuitMessage(1);
                 return -1;
             }
@@ -138,7 +135,7 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
 
             if (!GetClientRect(h_wnd, &rect))
             {
-                debug_log(L"Failed to get client rect, %d\n", GetLastError());
+                DLOG("Failed to get client rect, %d\n", GetLastError());
                 EndPaint(h_wnd, &paint);
                 return -1;
             }
@@ -147,14 +144,14 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
 
             if (NULL == h_brush)
             {
-                debug_log(L"Failed to create brush, %d\n", GetLastError());
+                DLOG("Failed to create brush, %d\n", GetLastError());
                 EndPaint(h_wnd, &paint);
                 return -1;
             }
 
             if (0 == FillRect(h_display_ctx, &rect, h_brush))
             {
-                debug_log(L"Failed to fill rect, %d\n", GetLastError());
+                DLOG("Failed to fill rect, %d\n", GetLastError());
                 DeleteObject(h_brush);
                 EndPaint(h_wnd, &paint);
                 return -1;
@@ -162,40 +159,25 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
 
             if (0 == SetBkMode(h_display_ctx, TRANSPARENT))
             {
-                debug_log(L"Failed to set background mode, %d\n", GetLastError());
+                DLOG("Failed to set background mode, %d\n", GetLastError());
                 EndPaint(h_wnd, &paint);
                 return -1;
             }
 
             if (!DeleteObject(h_brush))
             {
-                debug_log(L"Failed to delete brush, %d\n", GetLastError());
+                DLOG("Failed to delete brush, %d\n", GetLastError());
                 EndPaint(h_wnd, &paint);
                 return -1;
             }
 
-            time_t    rawtime      = 0;
-            struct tm timeinfo     = { 0 };
-            char      time_str[80] = { 0 };
-
-            time(&rawtime);
-
-            errno_t err = localtime_s(&timeinfo, &rawtime);
-
-            if (0 != err)
-            {
-                debug_log(L"localtime_s failed with error: %d\n", err);
-                // default time string if localtime fails
-                strcpy_s(time_str, sizeof(time_str), "00:00:00");
-            }
-            else
-            {
-                strftime(time_str, sizeof(time_str), "%H:%M:%S", &timeinfo);
-            }
+            // Use Windows API to get current time instead of CRT functions
+            WCHAR time_str[80] = { 0 };
+            get_current_time_string(time_str, sizeof(time_str) / sizeof(WCHAR));
 
             if (CLR_INVALID == SetTextColor(h_display_ctx, RGB(255, 255, 255)))
             {
-                debug_log(L"Failed to set text color, %d\n", GetLastError());
+                DLOG("Failed to set text color, %d\n", GetLastError());
                 EndPaint(h_wnd, &paint);
                 return -1;
             }
@@ -218,7 +200,7 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
 
             HFONT h_old_font = (HFONT)SelectObject(h_display_ctx, h_font);
 
-            DrawText(h_display_ctx, time_str, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextW(h_display_ctx, time_str, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
             SelectObject(h_display_ctx, h_old_font);
             DeleteObject(h_font);
@@ -231,7 +213,7 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
             {
                 if (!InvalidateRect(h_wnd, NULL, TRUE))
                 {
-                    debug_log(L"Failed to invalidate rect, %d\n", GetLastError());
+                    DLOG("Failed to invalidate rect, %d\n", GetLastError());
                     PostQuitMessage(1);
                 }
             }
@@ -301,6 +283,46 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
     return DefWindowProcW(h_wnd, msg, w_param, l_param);
 }
 
+// No-CRT helper function to get current time as formatted string
+static VOID get_current_time_string (WCHAR * buffer, SIZE_T buffer_size)
+{
+    SYSTEMTIME st = { 0 };
+    GetLocalTime(&st);
+
+    // Format as HH:MM:SS
+    if (buffer_size >= 9) // Minimum size for "HH:MM:SS\0"
+    {
+        buffer[0] = L'0' + (st.wHour / 10);
+        buffer[1] = L'0' + (st.wHour % 10);
+        buffer[2] = L':';
+        buffer[3] = L'0' + (st.wMinute / 10);
+        buffer[4] = L'0' + (st.wMinute % 10);
+        buffer[5] = L':';
+        buffer[6] = L'0' + (st.wSecond / 10);
+        buffer[7] = L'0' + (st.wSecond % 10);
+        buffer[8] = L'\0';
+    }
+    else if (buffer_size > 0)
+    {
+        buffer[0] = L'\0'; // Ensure null termination
+    }
+}
+
+// No-CRT string copy function (if needed elsewhere)
+static VOID strcpy_nocrt (CHAR * dest, const CHAR * src, SIZE_T dest_size)
+{
+    SIZE_T i = 0;
+    if (dest_size > 0)
+    {
+        while (src[i] != '\0' && i < (dest_size - 1))
+        {
+            dest[i] = src[i];
+            i++;
+        }
+        dest[i] = '\0';
+    }
+}
+
 static VOID apply_rounded_corners (HWND h_wnd, INT corner_radius)
 {
     RECT rect = { 0 };
@@ -324,7 +346,7 @@ static VOID snap_to_corner (HWND h_wnd)
 
     if (!GetWindowRect(h_wnd, &window_rect))
     {
-        debug_log(L"Failed to get window rectangle for snapping\n");
+        DLOG("Failed to get window rectangle for snapping\n");
         goto EXIT;
     }
 
@@ -332,7 +354,7 @@ static VOID snap_to_corner (HWND h_wnd)
 
     if (NULL == h_monitor)
     {
-        debug_log(L"Failed to get monitor handle for snapping\n");
+        DLOG("Failed to get monitor handle for snapping\n");
         goto EXIT;
     }
 
@@ -341,7 +363,7 @@ static VOID snap_to_corner (HWND h_wnd)
 
     if (!GetMonitorInfoW(h_monitor, &monitor_info))
     {
-        debug_log(L"Failed to get monitor info for snapping\n");
+        DLOG("Failed to get monitor info for snapping\n");
         goto EXIT;
     }
 
@@ -368,12 +390,14 @@ static VOID snap_to_corner (HWND h_wnd)
           monitor_top,
           "top-right" },
 
-        { (window_rect.left <= monitor_left + SNAP_DISTANCE && window_rect.bottom >= monitor_bottom - SNAP_DISTANCE),
+        { (window_rect.left <= monitor_left + SNAP_DISTANCE && window_rect.bottom >= monitor_bottom -
+        SNAP_DISTANCE),
           monitor_left,
           monitor_bottom - window_height,
           "bottom-left" },
 
-        { (window_rect.right >= monitor_right - SNAP_DISTANCE && window_rect.bottom >= monitor_bottom - SNAP_DISTANCE),
+        { (window_rect.right >= monitor_right - SNAP_DISTANCE && window_rect.bottom >= monitor_bottom -
+        SNAP_DISTANCE),
           monitor_right - window_width,
           monitor_bottom - window_height,
           "bottom-right" },
@@ -408,7 +432,7 @@ static VOID snap_to_corner (HWND h_wnd)
             new_x     = snap_targets[idx].x;
             new_y     = snap_targets[idx].y;
             b_snapped = TRUE;
-            debug_log(L"Snapped to %S\n", snap_targets[idx].p_name);
+            DLOG("Snapped to %S\n", snap_targets[idx].p_name);
             break;
         }
     }
@@ -416,7 +440,7 @@ static VOID snap_to_corner (HWND h_wnd)
     if (b_snapped)
     {
         SetWindowPos(h_wnd, NULL, new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-        debug_log(L"Window b_snapped to position: %d, %d on monitor\n", new_x, new_y);
+        DLOG("Window b_snapped to position: %d, %d on monitor\n", new_x, new_y);
     }
 
 EXIT:
@@ -430,7 +454,7 @@ static BOOL enable_acrylic (HWND h_wnd)
 
     if (FAILED(DwmIsCompositionEnabled(&b_dwm_enabled)) || (!b_dwm_enabled))
     {
-        debug_log(L"DWM is not enabled, %d\n", GetLastError());
+        DLOG("DWM is not enabled, %d\n", GetLastError());
         goto EXIT;
     }
 
