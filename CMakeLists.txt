@@ -39,9 +39,15 @@ if(NOT MSVC)
     message(FATAL_ERROR "chrono can only be built with MSVC")
 endif()
 
-target_compile_options(chrono PRIVATE /W4)
+target_compile_options(chrono PRIVATE
+    /W4
+    /GS-
+    /Gy
+    /TC
+)
+
 set_target_properties(chrono PROPERTIES
-    LINK_FLAGS "/SUBSYSTEM:WINDOWS"
+    LINK_FLAGS "/SUBSYSTEM:WINDOWS /NODEFAULTLIB /ENTRY:WinMain"
 )
 
 set_target_properties(chrono PROPERTIES
@@ -49,13 +55,21 @@ set_target_properties(chrono PROPERTIES
 )
 
 string(REPLACE "/RTC1" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
-string(REPLACE "/MDd" "/MD" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+string(REPLACE "/MDd" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+string(REPLACE "/MD" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
+string(REPLACE "/MT" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
+string(REPLACE "/MTd" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
 
 set_target_properties(chrono PROPERTIES
-    COMPILE_FLAGS_DEBUG "/Od /Zi /D_DEBUG"
-    COMPILE_FLAGS_RELEASE "/O2 /DNDEBUG"
-    COMPILE_FLAGS_RELWITHDEBINFO "/O2 /Zi /DNDEBUG"
-    COMPILE_FLAGS_MINSIZEREL "/Os /DNDEBUG"
+    COMPILE_FLAGS_DEBUG "/Od /Zi /D_DEBUG /GS- /Gy"
+    COMPILE_FLAGS_RELEASE "/O2 /DNDEBUG /GS- /Gy"
+    COMPILE_FLAGS_RELWITHDEBINFO "/O2 /Zi /DNDEBUG /GS- /Gy"
+    COMPILE_FLAGS_MINSIZEREL "/Os /DNDEBUG /GS- /Gy"
+)
+
+target_compile_definitions(chrono PRIVATE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
 )
 
 target_include_directories(chrono PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
@@ -80,3 +94,4 @@ message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Compiler: ${CMAKE_C_COMPILER_ID}")
 message(STATUS "  Output Directory: ${CMAKE_BINARY_DIR}/bin")
+message(STATUS "  CRT: Disabled (No CRT build)")
