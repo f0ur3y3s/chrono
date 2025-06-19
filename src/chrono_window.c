@@ -4,6 +4,74 @@ static BOOL  gb_is_dragging = FALSE;
 static POINT g_drag_offset  = { 0, 0 };
 static VOID  get_time_str (WCHAR * buffer, SIZE_T buffer_size);
 
+// windows 10 build 1803+ acrylic effect
+typedef enum _ACCENT_STATE
+{
+    ACCENT_DISABLED                   = 0,
+    ACCENT_ENABLE_GRADIENT            = 1,
+    ACCENT_ENABLE_TRANSPARENTGRADIENT = 2,
+    ACCENT_ENABLE_BLURBEHIND          = 3,
+    ACCENT_ENABLE_ACRYLICBLURBEHIND   = 4,
+    ACCENT_INVALID_STATE              = 5
+} ACCENT_STATE;
+
+typedef struct _ACCENT_POLICY
+{
+    ACCENT_STATE AccentState;
+    DWORD        AccentFlags;
+    DWORD        GradientColor;
+    DWORD        AnimationId;
+} ACCENT_POLICY;
+
+typedef enum _WINDOWCOMPOSITIONATTRIB
+{
+    WCA_UNDEFINED                     = 0,
+    WCA_NCRENDERING_ENABLED           = 1,
+    WCA_NCRENDERING_POLICY            = 2,
+    WCA_TRANSITIONS_FORCEDISABLED     = 3,
+    WCA_ALLOW_NCPAINT                 = 4,
+    WCA_CAPTION_BUTTON_BOUNDS         = 5,
+    WCA_NONCLIENT_RTL_LAYOUT          = 6,
+    WCA_FORCE_ICONIC_REPRESENTATION   = 7,
+    WCA_EXTENDED_FRAME_BOUNDS         = 8,
+    WCA_HAS_ICONIC_BITMAP             = 9,
+    WCA_THEME_ATTRIBUTES              = 10,
+    WCA_NCRENDERING_EXILED            = 11,
+    WCA_NCADORNMENTINFO               = 12,
+    WCA_EXCLUDED_FROM_LIVEPREVIEW     = 13,
+    WCA_VIDEO_OVERLAY_ACTIVE          = 14,
+    WCA_FORCE_ACTIVEWINDOW_APPEARANCE = 15,
+    WCA_DISALLOW_PEEK                 = 16,
+    WCA_CLOAK                         = 17,
+    WCA_CLOAKED                       = 18,
+    WCA_ACCENT_POLICY                 = 19,
+    WCA_FREEZE_REPRESENTATION         = 20,
+    WCA_EVER_UNCLOAKED                = 21,
+    WCA_VISUAL_OWNER                  = 22,
+    WCA_HOLOGRAPHIC                   = 23,
+    WCA_EXCLUDED_FROM_DDA             = 24,
+    WCA_PASSIVEUPDATEMODE             = 25,
+    WCA_USEDARKMODECOLORS             = 26,
+    WCA_LAST                          = 27
+} WINDOWCOMPOSITIONATTRIB;
+
+typedef struct _WINDOWCOMPOSITIONATTRIBDATA
+{
+    WINDOWCOMPOSITIONATTRIB Attribute;
+    PVOID                   pvData;
+    SIZE_T                  cbData;
+} WINDOWCOMPOSITIONATTRIBDATA;
+
+typedef BOOL(WINAPI * pSetWindowCompositionAttribute)(HWND, WINDOWCOMPOSITIONATTRIBDATA *);
+
+typedef struct snap_target_t
+{
+    BOOL         b_cond;
+    int          x;
+    int          y;
+    const char * p_name;
+} snap_target_t;
+
 LRESULT CALLBACK window_proc (HWND h_wnd, UINT u_msg, WPARAM w_param, LPARAM l_param)
 {
     switch (u_msg)
@@ -257,35 +325,49 @@ BOOL enable_acrylic (HWND h_wnd)
 
     if (FAILED(DwmIsCompositionEnabled(&b_dwm_enabled)) || (!b_dwm_enabled))
     {
-        DLOG("DWM is not enabled, \n");
+        DLOG("DWM is not enabled\n");
         log_last_error();
         goto EXIT;
     }
 
-    // load SetWindowCompositionAttribute
-    HMODULE h_user32 = GetModuleHandleW(L"user32.dll");
+    HMODULE h_user32 = GetModuleHandleA("user32");
 
-    if (h_user32)
+    if (!h_user32)
     {
-        pSetWindowCompositionAttribute SetWindowCompositionAttribute
-            = (pSetWindowCompositionAttribute)GetProcAddress(h_user32, "SetWindowCompositionAttribute");
-
-        if (SetWindowCompositionAttribute)
-        {
-            ACCENT_POLICY accent = { 0 };
-            accent.AccentState   = ACCENT_ENABLE_ACRYLICBLURBEHIND;
-            accent.AccentFlags   = 0;
-            accent.GradientColor = 0xA0000000;
-            accent.AnimationId   = 0;
-
-            WINDOWCOMPOSITIONATTRIBDATA data = { 0 };
-            data.Attribute                   = WCA_ACCENT_POLICY;
-            data.pvData                      = &accent;
-            data.cbData                      = sizeof(accent);
-
-            b_status = SetWindowCompositionAttribute(h_wnd, &data);
-        }
+        DLOG("user32 module not found\n");
+        goto EXIT;
     }
+
+    struct
+    {
+        HMODULE      module;
+        FARPROC      function;
+        const char * name;
+    } api_info = { .module = h_user32, .function = NULL, .name = "SetWindowCompositionAttribute" };
+
+    api_info.function = GetProcAddress(api_info.module, api_info.name);
+
+    if (!api_info.function)
+    {
+        DLOG("Composition attribute function not available\n");
+        goto EXIT;
+    }
+
+    pSetWindowCompositionAttribute composition_func = (pSetWindowCompositionAttribute)api_info.function;
+
+    ACCENT_POLICY accent = { 0 };
+    accent.AccentState   = ACCENT_ENABLE_ACRYLICBLURBEHIND;
+    accent.AccentFlags   = 0;
+    accent.GradientColor = 0xA0000000;
+    accent.AnimationId   = 0;
+
+    WINDOWCOMPOSITIONATTRIBDATA data = { 0 };
+    data.Attribute                   = WCA_ACCENT_POLICY;
+    data.pvData                      = &accent;
+    data.cbData                      = sizeof(accent);
+
+    b_status = composition_func(h_wnd, &data);
+    DLOG("Acrylic effect %s\n", b_status ? "enabled" : "failed");
 
 EXIT:
     return b_status;
