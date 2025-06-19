@@ -1,19 +1,21 @@
 #include "main.h"
 
 static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARAM l_param);
-static BOOL             set_rounded_corners (HWND h_wnd, int radius);
-static void             debug_log (const WCHAR * p_format, ...);
-static void             snap_to_corner (HWND h_wnd);
+static VOID             debug_log (CONST WCHAR * p_format, ...);
+static VOID             snap_to_corner (HWND h_wnd);
+static BOOL             enable_acrylic (HWND h_wnd);
+static BOOL             enable_dwm_rounded_corners (HWND h_wnd);
+static VOID             apply_rounded_corners (HWND h_wnd, INT radius);
 
 static BOOL  gb_is_dragging = FALSE;
 static POINT g_drag_offset  = { 0, 0 };
 
-int WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cmdline, int show_cmd)
+INT WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cmdline, INT show_cmd)
 {
     UNREFERENCED_PARAMETER(h_prev_instance);
     UNREFERENCED_PARAMETER(lp_cmdline);
 
-    int         status = 0;
+    INT         status = 1;
     WNDCLASSEXW wnd    = { 0 };
     wnd.cbSize         = sizeof(WNDCLASSEXW);
     wnd.lpfnWndProc    = window_proc;
@@ -25,11 +27,10 @@ int WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
     if (0 == RegisterClassExW(&wnd))
     {
         debug_log(L"Failed to register window class: %d\n", GetLastError());
-        status = 1;
         goto EXIT;
     }
 
-    HWND h_wnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+    HWND h_wnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST,
                                  CLASS_NAME,
                                  WINDOW_NAME,
                                  WS_POPUP,
@@ -45,28 +46,31 @@ int WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
     if (NULL == h_wnd)
     {
         debug_log(L"Failed to create window, %d\n", GetLastError());
-        status = 2;
         goto EXIT;
+    }
+
+    if (!enable_dwm_rounded_corners(h_wnd))
+    {
+        apply_rounded_corners(h_wnd, RADIUS);
+    }
+
+    if (!enable_acrylic(h_wnd))
+    {
+        MessageBoxW(NULL,
+                    L"Failed to enable acrylic effect. This feature requires Windows 10 build 1803 or later.",
+                    L"Warning",
+                    MB_OK | MB_ICONWARNING);
     }
 
     if (!SetLayeredWindowAttributes(h_wnd, 0, TRANSPARENCY, LWA_ALPHA))
     {
         debug_log(L"Failed to set layered window attributes, %d\n", GetLastError());
-        status = 3;
-        goto EXIT;
-    }
-
-    if (!set_rounded_corners(h_wnd, RADIUS))
-    {
-        debug_log(L"Failed to set rounded corners, %d\n", GetLastError());
-        status = 4;
         goto EXIT;
     }
 
     if (0 == SetTimer(h_wnd, TIMER_ID, UPDATE_INTERVAL, NULL))
     {
         debug_log(L"Failed to set timer, %d\n", GetLastError());
-        status = 5;
         goto EXIT;
     }
 
@@ -83,7 +87,6 @@ int WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
     if (!UpdateWindow(h_wnd))
     {
         debug_log(L"Failed to update window, %d\n", GetLastError());
-        status = 7;
         goto EXIT;
     }
 
@@ -94,6 +97,8 @@ int WINAPI WinMain (HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cm
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+
+    status = 0;
 
 EXIT:
     return status;
@@ -129,7 +134,6 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
                 return -1;
             }
 
-            // set background to black for better contrast
             RECT rect = { 0 };
 
             if (!GetClientRect(h_wnd, &rect))
@@ -152,6 +156,13 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
             {
                 debug_log(L"Failed to fill rect, %d\n", GetLastError());
                 DeleteObject(h_brush);
+                EndPaint(h_wnd, &paint);
+                return -1;
+            }
+
+            if (0 == SetBkMode(h_display_ctx, TRANSPARENT))
+            {
+                debug_log(L"Failed to set background mode, %d\n", GetLastError());
                 EndPaint(h_wnd, &paint);
                 return -1;
             }
@@ -185,13 +196,6 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
             if (CLR_INVALID == SetTextColor(h_display_ctx, RGB(255, 255, 255)))
             {
                 debug_log(L"Failed to set text color, %d\n", GetLastError());
-                EndPaint(h_wnd, &paint);
-                return -1;
-            }
-
-            if (0 == SetBkMode(h_display_ctx, TRANSPARENT))
-            {
-                debug_log(L"Failed to set background mode, %d\n", GetLastError());
                 EndPaint(h_wnd, &paint);
                 return -1;
             }
@@ -285,8 +289,8 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
                 POINT cursor_pos = { 0 };
                 GetCursorPos(&cursor_pos);
 
-                int new_x = cursor_pos.x - g_drag_offset.x;
-                int new_y = cursor_pos.y - g_drag_offset.y;
+                INT new_x = cursor_pos.x - g_drag_offset.x;
+                INT new_y = cursor_pos.y - g_drag_offset.y;
 
                 SetWindowPos(h_wnd, NULL, new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
@@ -297,52 +301,24 @@ static LRESULT CALLBACK window_proc (HWND h_wnd, UINT msg, WPARAM w_param, LPARA
     return DefWindowProcW(h_wnd, msg, w_param, l_param);
 }
 
-static BOOL set_rounded_corners (HWND h_wnd, int radius)
+static VOID apply_rounded_corners (HWND h_wnd, INT corner_radius)
 {
-    BOOL b_status = FALSE;
-
-    if (NULL == h_wnd || radius < 0)
-    {
-        goto EXIT;
-    }
-
     RECT rect = { 0 };
+    GetClientRect(h_wnd, &rect);
 
-    if (!GetWindowRect(h_wnd, &rect))
+    INT width  = rect.right - rect.left;
+    INT height = rect.bottom - rect.top;
+
+    HRGN h_rgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, corner_radius * 2, corner_radius * 2);
+
+    if (h_rgn)
     {
-        goto EXIT;
+        SetWindowRgn(h_wnd, h_rgn, TRUE);
+        // windows takes ownership of the region, don't delete it
     }
-
-    int width  = rect.right - rect.left;
-    int height = rect.bottom - rect.top;
-
-    HRGN h_region = CreateRoundRectRgn(0, 0, width, height, radius * 2, radius * 2);
-
-    if (0 == SetWindowRgn(h_wnd, h_region, TRUE))
-    {
-        DeleteObject(h_region);
-        goto EXIT;
-    }
-
-    // Note: Don't delete the region - Windows takes ownership of it
-
-    b_status = TRUE;
-
-EXIT:
-    return b_status;
 }
 
-static void debug_log (const WCHAR * p_format, ...)
-{
-    WCHAR   buffer[1024] = { 0 };
-    va_list args;
-    va_start(args, p_format);
-    vswprintf(buffer, sizeof(buffer) / sizeof(WCHAR), p_format, args);
-    va_end(args);
-    OutputDebugStringW(buffer);
-}
-
-static void snap_to_corner (HWND h_wnd)
+static VOID snap_to_corner (HWND h_wnd)
 {
     RECT window_rect = { 0 };
 
@@ -370,14 +346,14 @@ static void snap_to_corner (HWND h_wnd)
     }
 
     RECT monitor_rect   = monitor_info.rcMonitor;
-    int  window_width   = window_rect.right - window_rect.left;
-    int  window_height  = window_rect.bottom - window_rect.top;
-    int  monitor_left   = monitor_rect.left;
-    int  monitor_top    = monitor_rect.top;
-    int  monitor_right  = monitor_rect.right;
-    int  monitor_bottom = monitor_rect.bottom;
-    int  new_x          = window_rect.left;
-    int  new_y          = window_rect.top;
+    INT  window_width   = window_rect.right - window_rect.left;
+    INT  window_height  = window_rect.bottom - window_rect.top;
+    INT  monitor_left   = monitor_rect.left;
+    INT  monitor_top    = monitor_rect.top;
+    INT  monitor_right  = monitor_rect.right;
+    INT  monitor_bottom = monitor_rect.bottom;
+    INT  new_x          = window_rect.left;
+    INT  new_y          = window_rect.top;
     BOOL b_snapped      = FALSE;
 
     // clang-format off
@@ -425,7 +401,7 @@ static void snap_to_corner (HWND h_wnd)
     // clang-format on
 
     // check each snap target in priority order
-    for (int idx = 0; idx < (sizeof(snap_targets) / sizeof(snap_targets[0])); idx++)
+    for (INT idx = 0; idx < (sizeof(snap_targets) / sizeof(snap_targets[0])); idx++)
     {
         if (snap_targets[idx].b_cond)
         {
@@ -445,4 +421,63 @@ static void snap_to_corner (HWND h_wnd)
 
 EXIT:
     return;
+}
+
+static BOOL enable_acrylic (HWND h_wnd)
+{
+    BOOL b_status      = FALSE;
+    BOOL b_dwm_enabled = FALSE;
+
+    if (FAILED(DwmIsCompositionEnabled(&b_dwm_enabled)) || (!b_dwm_enabled))
+    {
+        debug_log(L"DWM is not enabled, %d\n", GetLastError());
+        goto EXIT;
+    }
+
+    // load SetWindowCompositionAttribute
+    HMODULE h_user32 = GetModuleHandleW(L"user32.dll");
+
+    if (h_user32)
+    {
+        pSetWindowCompositionAttribute SetWindowCompositionAttribute
+            = (pSetWindowCompositionAttribute)GetProcAddress(h_user32, "SetWindowCompositionAttribute");
+
+        if (SetWindowCompositionAttribute)
+        {
+            ACCENT_POLICY accent = { 0 };
+            accent.AccentState   = ACCENT_ENABLE_ACRYLICBLURBEHIND;
+            accent.AccentFlags   = 0;
+            accent.GradientColor = 0xA0000000;
+            accent.AnimationId   = 0;
+
+            WINDOWCOMPOSITIONATTRIBDATA data = { 0 };
+            data.Attribute                   = WCA_ACCENT_POLICY;
+            data.pvData                      = &accent;
+            data.cbData                      = sizeof(accent);
+
+            b_status = SetWindowCompositionAttribute(h_wnd, &data);
+        }
+    }
+
+EXIT:
+    return b_status;
+}
+
+static BOOL enable_dwm_rounded_corners (HWND h_wnd)
+{
+    // should work on Windows 11 build 22000+
+    DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
+    HRESULT h_result = DwmSetWindowAttribute(h_wnd, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
+
+    return SUCCEEDED(h_result);
+}
+
+static VOID debug_log (const WCHAR * p_format, ...)
+{
+    WCHAR   buffer[1024] = { 0 };
+    va_list args;
+    va_start(args, p_format);
+    vswprintf(buffer, sizeof(buffer) / sizeof(WCHAR), p_format, args);
+    va_end(args);
+    OutputDebugStringW(buffer);
 }
