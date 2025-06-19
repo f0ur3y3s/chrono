@@ -32,6 +32,7 @@ target_link_libraries(chrono
     user32
     gdi32
     kernel32
+    dwmapi
 )
 
 if(NOT MSVC)
